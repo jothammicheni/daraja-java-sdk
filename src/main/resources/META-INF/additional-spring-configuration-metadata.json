@@ -1,0 +1,43 @@
+{
+  "properties": [
+    {
+      "name": "mpesa.daraja.consumer-key",
+      "type": "java.lang.String",
+      "description": "The unique Consumer Key generated from the Safaricom Daraja Developer portal."
+    },
+    {
+      "name": "mpesa.daraja.consumer-secret",
+      "type": "java.lang.String",
+      "description": "The unique Consumer Secret corresponding to your developer credentials."
+    },
+    {
+      "name": "mpesa.daraja.api-secret",
+      "type": "java.lang.String",
+      "description": "The Lipa Na M-Pesa Online passkey sent by Safaricom via email for production routing."
+    },
+    {
+      "name": "mpesa.daraja.environment",
+      "type": "com.github.jothammicheni.daraja_springboot_starter_jdk.core.config.MpesaEnvironment",
+      "description": "The current operational mode. Toggles target endpoints between sandbox and production configurations.",
+      "defaultValue": "SANDBOX"
+    },
+    {
+      "name": "mpesa.daraja.app-url",
+      "type": "java.lang.String",
+      "description": "The base root domain public address of the hosting application (e.g., https://api.yourcompany.co.ke).",
+      "defaultValue": "http://localhost:8080"
+    },
+    {
+      "name": "mpesa.daraja.cache-type",
+      "type": "java.lang.String",
+      "description": "The strategy used for storing tokens and transaction records. Options are 'local' or 'redis'.",
+      "defaultValue": "local"
+    },
+    {
+      "name": "mpesa.daraja.confirmation-url-path",
+      "type": "java.lang.String",
+      "description": "The dynamic endpoint mapping path to catch payment confirmations.",
+      "defaultValue": "/cb/confirmation"
+    }
+  ]
+}
