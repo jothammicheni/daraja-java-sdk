@@ -93,16 +93,24 @@ jobs:
             echo "✅ All files have license headers"
           fi
 
+      # NOTE: jacoco-maven-plugin is now declared in pom.xml (with a
+      # prepare-agent execution bound to `test`), so:
+      #   1) `mvn test` records coverage data to target/jacoco.exec
+      #   2) the `jacoco` plugin prefix resolves correctly here
+      - name: Run tests with coverage
+        run: mvn test
+
+      - name: Generate coverage report
+        run: mvn jacoco:report
+
       - name: Check test coverage
         run: |
           echo "📊 Checking test coverage..."
-          mvn jacoco:report
-          
           if [ -f target/site/jacoco/index.html ]; then
             COVERAGE=$(grep -oP 'Total.*?([0-9]+)%' target/site/jacoco/index.html | grep -oP '[0-9]+' | head -1 || echo "0")
             echo "Coverage: ${COVERAGE}%"
-          
-            if [ ${COVERAGE} -lt 60 ]; then
+
+            if [ "${COVERAGE}" -lt 60 ]; then
               echo "❌ Test coverage is ${COVERAGE}% - below 60% threshold"
               exit 1
             fi
@@ -112,6 +120,7 @@ jobs:
           fi
 
       - name: Upload coverage report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -232,7 +241,7 @@ jobs:
             echo "tests_run=N/A" >> $GITHUB_OUTPUT
             echo "tests_failed=N/A" >> $GITHUB_OUTPUT
           fi
-          
+
           if [ -f target/site/jacoco/index.html ]; then
             COVERAGE=$(grep -oP 'Total.*?([0-9]+)%' target/site/jacoco/index.html | grep -oP '[0-9]+' | head -1 || echo "N/A")
             echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
@@ -247,15 +256,15 @@ jobs:
             const testsRun = '${{ steps.results.outputs.tests_run }}';
             const testsFailed = '${{ steps.results.outputs.tests_failed }}';
             const coverage = '${{ steps.results.outputs.coverage }}';
-            
+
             let status = '✅';
             let message = 'All checks passed!';
-            
+
             if (testsFailed !== '0' && testsFailed !== 'N/A' && testsFailed !== '') {
               status = '❌';
               message = `${testsFailed} tests are failing!`;
             }
-            
+
             const body = `## 📊 PR Validation Results
             | Metric | Result |
             |--------|--------|
@@ -263,9 +272,9 @@ jobs:
             | **Tests Failed** | ${testsFailed} |
             | **Coverage** | ${coverage}% |
             | **Java Versions** | 17, 21 |
-            
+
             ${status} **Status:** ${message}
-            
+
             ---
             📝 **Checklist:**
             - [ ] Code compiles successfully
@@ -275,7 +284,7 @@ jobs:
             - [ ] PR title follows convention
             - [ ] PR description is provided
             `;
-            
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -309,38 +318,39 @@ jobs:
           echo "all_passed=true" >> $GITHUB_OUTPUT
 
       - name: Merge PR to dev
+        id: merge
         if: steps.check_status.outputs.all_passed == 'true'
         uses: actions/github-script@v7
         with:
           script: |
             const prNumber = context.payload.pull_request.number;
-            
+
             // Get the PR details
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber
             });
-            
+
             // Check if PR is mergeable
             if (!pr.mergeable) {
               console.log('PR is not mergeable. Skipping auto-merge.');
               return;
             }
-            
+
             // Check if branch protection is satisfied
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: prNumber
             });
-            
+
             const approved = reviews.some(review => review.state === 'APPROVED');
-            
+
             // If no approval required or approved, merge
             if (pr.base.ref === 'dev') {
               console.log(`Attempting to auto-merge PR #${prNumber} to dev...`);
-            
+
               // Merge the PR
               await github.rest.pulls.merge({
                 owner: context.repo.owner,
@@ -349,7 +359,7 @@ jobs:
                 commit_title: `Auto-merge: ${pr.title}`,
                 merge_method: 'squash'
               });
-            
+
               console.log(`✅ Successfully auto-merged PR #${prNumber} to dev!`);
             } else {
               console.log(`PR #${prNumber} is not targeting dev. Skipping auto-merge.`);
@@ -362,20 +372,20 @@ jobs:
           script: |
             const prNumber = context.payload.pull_request.number;
             const success = '${{ steps.merge.outcome }}' === 'success';
-            
+
             const body = success
               ? `## ✅ Auto-Merge Successful
               This PR has been automatically merged to \`dev\` branch because all checks passed!
-            
+
               🎉 Your changes are now in the development branch.`
               : `## ⚠️ Auto-Merge Skipped
               This PR could not be automatically merged. Please check the following:
               - All required checks must pass
               - Branch must be mergeable
               - No conflicts with dev branch
-            
+
               You can manually merge this PR when ready.`;
-            
+
             github.rest.issues.createComment({
               issue_number: prNumber,
               owner: context.repo.owner,

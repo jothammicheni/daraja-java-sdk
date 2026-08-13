@@ -94,6 +94,55 @@
 				</configuration>
 			</plugin>
 
+			<!-- JaCoCo: code coverage instrumentation + reporting -->
+			<!-- prepare-agent hooks into `mvn test` so coverage data is actually
+			     recorded to target/jacoco.exec; without it, the `report` goal
+			     has nothing to report on (and the `jacoco` prefix used in CI
+			     can't resolve at all unless this plugin is declared here). -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.12</version>
+				<executions>
+					<execution>
+						<id>prepare-agent</id>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>report</id>
+						<phase>test</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+					<!-- Optional but recommended: enforce the coverage threshold
+					     natively instead of grepping the HTML report in CI. -->
+					<execution>
+						<id>jacoco-check</id>
+						<phase>verify</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<rule>
+									<element>BUNDLE</element>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>0.60</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
 			<!-- Package as JAR with dependencies -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
