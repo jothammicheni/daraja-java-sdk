@@ -1,4 +1,4 @@
-package com.github.jothammicheni.daraja_springboot_starter_jdk.core.exception;
+package com.github.jothammicheni.daraja.exception;
 
 public enum MpesaErrorCode {
     GENERIC_ERROR("MPESA-001", "An unexpected error occurred"),

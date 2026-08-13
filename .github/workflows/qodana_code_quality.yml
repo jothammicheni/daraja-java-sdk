@@ -1,0 +1,74 @@
+#-------------------------------------------------------------------------------#
+#            Discover all capabilities of Qodana in our documentation           #
+#             https://www.jetbrains.com/help/qodana/about-qodana.html           #
+#-------------------------------------------------------------------------------#
+
+name: Qodana Code Quality
+
+on:
+  workflow_dispatch:  # Manual trigger
+  pull_request:
+    branches:
+      - main
+      - dev
+  push:
+    branches:
+      - main
+      - dev
+
+jobs:
+  qodana:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+      security-events: write  # For SARIF upload
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 'Qodana Scan'
+        uses: JetBrains/qodana-action@v2026.2
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+        with:
+          pr-mode: ${{ github.event_name == 'pull_request' }}
+          use-caches: true
+          post-pr-comment: ${{ github.event_name == 'pull_request' }}
+          use-annotations: true
+          upload-result: ${{ github.event_name == 'pull_request' }}
+          push-fixes: 'none'
+          linter: jetbrains/qodana-jvm:2026.2  # Explicitly use JVM linter
+          config-file: .qodana/qodana.yaml  # Optional config file
+          additional-volumes: /home/runner/.m2:/root/.m2  # Mount Maven cache
+
+      - name: Upload SARIF report to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ github.workspace }}/qodana.sarif.json
+          category: qodana
+        continue-on-error: true
+
+      - name: Upload Qodana results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qodana-results
+          path: |
+            ${{ github.workspace }}/qodana.sarif.json
+            ${{ github.workspace }}/qodana-report.html
+            ${{ github.workspace }}/qodana-results/
+          retention-days: 30

@@ -1,4 +1,4 @@
-package com.github.jothammicheni.daraja_springboot_starter_jdk.core.dto;
+package com.github.jothammicheni.daraja.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.io.Serializable;
@@ -12,9 +12,7 @@ public record StkPushResponse(
         @JsonProperty("CustomerMessage") String customerMessage,
         String idempotencyKey,
         Instant timestamp
-) implements Serializable { // ⚡ FIXED: Mandatory for saving into AWS Redis Idempotency Cache
-
-    // ⚡ FIXED: Ensures data stream compatibility when other developers upgrade your library versions
+) implements Serializable {
     private static final long serialVersionUID = 1L;
 
     public StkPushResponse {
@@ -33,13 +31,13 @@ public record StkPushResponse(
 
     public StkPushResponse withIdempotencyKey(String key) {
         return new StkPushResponse(
-                this.merchantRequestID,
-                this.checkoutRequestID,
-                this.responseCode,
-                this.responseDescription,
-                this.customerMessage,
+                merchantRequestID,
+                checkoutRequestID,
+                responseCode,
+                responseDescription,
+                customerMessage,
                 key,
-                this.timestamp
+                timestamp
         );
     }
 }
