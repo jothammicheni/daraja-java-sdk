@@ -1,4 +1,4 @@
-package com.github.jothammicheni.daraja_springboot_starter_jdk.core.exception;
+package com.github.jothammicheni.daraja.exception;
 
 public class MpesaApiException extends RuntimeException {
     private final MpesaErrorCode errorCode;

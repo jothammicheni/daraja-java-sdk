@@ -1,4 +1,4 @@
-package com.github.jothammicheni.daraja_springboot_starter_jdk.core.config;
+package com.github.jothammicheni.daraja.config;
 
 public enum MpesaEnvironment {
     SANDBOX,
