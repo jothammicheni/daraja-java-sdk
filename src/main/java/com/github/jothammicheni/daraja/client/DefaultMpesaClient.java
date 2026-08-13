@@ -139,8 +139,12 @@ public class DefaultMpesaClient implements MpesaClient {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                log.severe("❌ M-Pesa API returned error: " + response.statusCode() + " for phone: " + maskedPhone);
-                throw new MpesaApiException("M-Pesa API returned: " + response.statusCode());
+                String errorBody = response.body();
+                log.severe("❌ M-Pesa API returned error: " + response.statusCode() +
+                        " for phone: " + maskedPhone + " | Body: " + errorBody);
+                throw new MpesaApiException(
+                        "M-Pesa API returned " + response.statusCode() + ": " + errorBody
+                );
             }
 
             StkPushResponse stkResponse = objectMapper.readValue(response.body(), StkPushResponse.class);
