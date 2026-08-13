@@ -13,7 +13,7 @@
 
 	<!-- GroupId must match your package structure -->
 	<groupId>com.github.jothammicheni</groupId>
-	<artifactId>daraja-springboot-starter-jdk</artifactId>
+	<artifactId>daraja-sdk</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 
 	<name>M-Pesa Daraja Spring Boot Starter</name>
