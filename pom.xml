@@ -41,6 +41,11 @@
 		<maven.compiler.target>17</maven.compiler.target>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<jackson.version>2.15.3</jackson.version>
+		<micrometer.version>1.13.2</micrometer.version>
+		<!-- micrometer-registry-prometheus 1.13.x is built against the new
+		     io.prometheus:prometheus-metrics-core client (not the legacy
+		     "simpleclient" one), so pin a compatible 1.3.x release of it. -->
+		<prometheus.version>1.3.1</prometheus.version>
 	</properties>
 
 	<dependencies>
@@ -78,6 +83,24 @@
 			<artifactId>assertj-core</artifactId>
 			<version>3.24.2</version>
 			<scope>test</scope>
+		</dependency>
+
+
+		<!--Micrometer Core (Zero external dependencies, lightweight) -->
+		<!-- Source: https://mvnrepository.com/artifact/io.prometheus/prometheus-metrics-core -->
+		<dependency>
+			<groupId>io.prometheus</groupId>
+			<artifactId>prometheus-metrics-core</artifactId>
+			<version>${prometheus.version}</version>
+			<scope>compile</scope>
+		</dependency>
+
+		<!-- Source: https://mvnrepository.com/artifact/io.micrometer/micrometer-registry-prometheus -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+			<version>${micrometer.version}</version>
+			<scope>compile</scope>
 		</dependency>
 	</dependencies>
 
