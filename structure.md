@@ -479,7 +479,7 @@ public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<Strin
         System.out.println("Receipt: " + payload.getReceiptNumber());
         
         // YOUR BUSINESS LOGIC HERE
-        // - Update order status to "PAID"
+        // - Update order status to "PAID".
         // - Send confirmation email
         // - Release inventory
     } else if ("1032".equals(payload.getResultCode())) {
