@@ -1,12 +1,9 @@
 package com.github.jothammicheni.daraja.client;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.jothammicheni.daraja.config.MpesaConfig;
 import com.github.jothammicheni.daraja.dto.StkPushRequest;
 import com.github.jothammicheni.daraja.dto.StkPushResponse;
 import com.github.jothammicheni.daraja.exception.MpesaApiException;
-import com.github.jothammicheni.daraja.exception.MpesaErrorCode;
 import com.github.jothammicheni.daraja.util.PhoneNumberUtils;
 
 import java.net.URI;
@@ -20,14 +17,23 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class DefaultMpesaClient implements MpesaClient {
 
     private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(DefaultMpesaClient.class.getName());
 
+    // JSON extraction patterns (Jackson removed)
+    private static final Pattern TOKEN_PATTERN = Pattern.compile("\"access_token\"\\s*:\\s*\"([^\"]+)\"");
+    private static final Pattern MERCHANT_REQUEST_ID_PATTERN = Pattern.compile("\"MerchantRequestID\"\\s*:\\s*\"([^\"]*)\"");
+    private static final Pattern CHECKOUT_REQUEST_ID_PATTERN = Pattern.compile("\"CheckoutRequestID\"\\s*:\\s*\"([^\"]*)\"");
+    private static final Pattern RESPONSE_CODE_PATTERN = Pattern.compile("\"ResponseCode\"\\s*:\\s*\"([^\"]*)\"");
+    private static final Pattern RESPONSE_DESCRIPTION_PATTERN = Pattern.compile("\"ResponseDescription\"\\s*:\\s*\"([^\"]*)\"");
+    private static final Pattern CUSTOMER_MESSAGE_PATTERN = Pattern.compile("\"CustomerMessage\"\\s*:\\s*\"([^\"]*)\"");
+
     private final MpesaConfig config;
     private final HttpClient httpClient;
-    private final ObjectMapper objectMapper;
     private final Map<String, CachedResponse> idempotencyCache;
     private String cachedToken;
     private long tokenExpiryTime;
@@ -50,12 +56,19 @@ public class DefaultMpesaClient implements MpesaClient {
         }
     }
 
+    // Public constructor (original)
     public DefaultMpesaClient(MpesaConfig config) {
         this.config = config;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(config.getConnectTimeout()))
                 .build();
-        this.objectMapper = new ObjectMapper();
+        this.idempotencyCache = new ConcurrentHashMap<>();
+    }
+
+    // Package-private constructor for testing (allows injecting mock HttpClient)
+    DefaultMpesaClient(MpesaConfig config, HttpClient httpClient) {
+        this.config = config;
+        this.httpClient = httpClient;
         this.idempotencyCache = new ConcurrentHashMap<>();
     }
 
@@ -116,15 +129,15 @@ public class DefaultMpesaClient implements MpesaClient {
         payload.put("Timestamp", timestamp);
         payload.put("TransactionType", "CustomerPayBillOnline");
         payload.put("Amount", request.amount());
-        payload.put("PartyA", normalizedPhone);      // ✅ Use normalized phone
+        payload.put("PartyA", normalizedPhone);
         payload.put("PartyB", request.businessShortCode());
-        payload.put("PhoneNumber", normalizedPhone); // ✅ Use normalized phone
+        payload.put("PhoneNumber", normalizedPhone);
         payload.put("CallBackURL", config.getCallbackUrl());
         payload.put("AccountReference", request.accountReference());
         payload.put("TransactionDesc", request.transactionDesc());
 
         try {
-            String jsonPayload = objectMapper.writeValueAsString(payload);
+            String jsonPayload = payloadToJson(payload);
 
             log.info("📤 Sending STK Push request for phone: " + maskedPhone + " | Amount: " + request.amount());
 
@@ -147,7 +160,8 @@ public class DefaultMpesaClient implements MpesaClient {
                 );
             }
 
-            StkPushResponse stkResponse = objectMapper.readValue(response.body(), StkPushResponse.class);
+            // Parse JSON manually (NO Jackson!)
+            StkPushResponse stkResponse = parseStkPushResponse(response.body());
 
             // DECORATE AND CACHE ONLY SUCCESSFUL RESPONSES
             if (stkResponse != null) {
@@ -171,6 +185,10 @@ public class DefaultMpesaClient implements MpesaClient {
         }
     }
 
+    // ============================================
+    // TOKEN MANAGEMENT
+    // ============================================
+
     private synchronized String getAccessToken() {
         if (cachedToken != null && System.currentTimeMillis() < tokenExpiryTime) {
             return cachedToken;
@@ -178,7 +196,6 @@ public class DefaultMpesaClient implements MpesaClient {
         return fetchNewToken();
     }
 
-    @SuppressWarnings("unchecked")
     private String fetchNewToken() {
         log.info("🔑 Token expired or missing. Fetching a fresh OAuth token from Safaricom Daraja...");
 
@@ -198,9 +215,10 @@ public class DefaultMpesaClient implements MpesaClient {
                 throw new MpesaApiException("Safaricom authentication failed: " + response.statusCode());
             }
 
-            JsonNode json = objectMapper.readTree(response.body());
-            if (json.has("access_token")) {
-                cachedToken = json.get("access_token").asText();
+            // Extract access_token from JSON manually (NO Jackson!)
+            String accessToken = extractAccessToken(response.body());
+            if (accessToken != null) {
+                cachedToken = accessToken;
                 tokenExpiryTime = System.currentTimeMillis() + (55 * 60 * 1000); // 55 minutes
                 log.info("✅ Token acquired successfully");
                 return cachedToken;
@@ -214,7 +232,81 @@ public class DefaultMpesaClient implements MpesaClient {
         }
     }
 
-    // Utility method to clean expired cache entries
+    // ============================================
+    // MANUAL JSON PARSING (NO JACKSON!)
+    // ============================================
+
+    private String extractAccessToken(String json) {
+        Matcher m = TOKEN_PATTERN.matcher(json);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return null;
+    }
+
+    private StkPushResponse parseStkPushResponse(String json) {
+        String merchantId = extractFirst(MERCHANT_REQUEST_ID_PATTERN, json);
+        String checkoutId = extractFirst(CHECKOUT_REQUEST_ID_PATTERN, json);
+        String responseCode = extractFirst(RESPONSE_CODE_PATTERN, json);
+        String responseDesc = extractFirst(RESPONSE_DESCRIPTION_PATTERN, json);
+        String customerMsg = extractFirst(CUSTOMER_MESSAGE_PATTERN, json);
+
+        if (merchantId == null && checkoutId == null && responseCode == null) {
+            log.warning("⚠️ Could not parse STK Push response: " + json);
+            throw new MpesaApiException("Failed to parse M-Pesa response: " + json);
+        }
+
+        return new StkPushResponse(
+                merchantId != null ? merchantId : "",
+                checkoutId != null ? checkoutId : "",
+                responseCode != null ? responseCode : "",
+                responseDesc != null ? responseDesc : "",
+                customerMsg != null ? customerMsg : "",
+                null,  // idempotencyKey (set later)
+                null   // timestamp (set later)
+        );
+    }
+
+    private String extractFirst(Pattern pattern, String input) {
+        Matcher m = pattern.matcher(input);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return null;
+    }
+
+    private String payloadToJson(Map<String, Object> payload) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        int count = 0;
+        for (Map.Entry<String, Object> entry : payload.entrySet()) {
+            if (count > 0) sb.append(",");
+            sb.append("\"").append(entry.getKey()).append("\":");
+            Object value = entry.getValue();
+            if (value instanceof String) {
+                sb.append("\"").append(escapeJson((String) value)).append("\"");
+            } else if (value instanceof Number) {
+                sb.append(value);
+            } else if (value instanceof Boolean) {
+                sb.append(value);
+            } else {
+                sb.append("\"").append(value).append("\"");
+            }
+            count++;
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
     public void cleanExpiredCache() {
         long ttl = Duration.ofHours(24).toMillis();
         idempotencyCache.entrySet().removeIf(entry -> entry.getValue().isExpired(ttl));
