@@ -18,6 +18,7 @@ A production-ready, pure Java SDK for Safaricom's Daraja M-Pesa API. Built for J
 - **Built-in Idempotency**: Prevents duplicate payments with Redis or local cache
 - **Phone Number Validation**: Supports all Kenyan formats (+254, 254, 07, 7, 01)
 - **Enterprise Security**: IP validation for webhook sources, signature verification
+- **Clean Builder Pattern**: Fluent API for constructing requests with auto-fill
 - **Beautiful Logging**: Clean, structured webhook logs out of the box
 - **Distributed Cache Ready**: Redis support for multi-instance deployments
 - **97% Code Reduction**: SDK handles ~290 lines of boilerplate code
@@ -406,33 +407,37 @@ MpesaConfig config = new MpesaConfig.Builder(
 MpesaClient client = new DefaultMpesaClient(config);
 ```
 
-### 2. Initiate STK Push Payment
+### 2. Initiate STK Push Payment (Using Builder Pattern)
 
 ```java
 import com.github.jothammicheni.daraja.dto.StkPushRequest;
 import com.github.jothammicheni.daraja.dto.StkPushResponse;
-import java.util.UUID;
 
-StkPushRequest request = new StkPushRequest(
-    "174379",                              // Business Shortcode
-    "254708374149",                        // Phone (any Kenyan format accepted)
-    1,                                     // Amount in KES
-    "254708374149",                        // Party A (same as phone)
-    "174379",                              // Party B (same as shortcode)
-    "ORDER-123",                           // Your order/reference ID
-    "Payment for order ORDER-123",         // Transaction description
-    UUID.randomUUID().toString()           // Idempotency Key - prevents duplicates
-);
+// ✅ Using the builder pattern with auto-fill
+StkPushRequest request = StkPushRequest.builder()
+    .businessShortCode("174379")          // Your PayBill/Till number
+    .phoneNumber("254708374149")          // Any Kenyan format works
+    .amount(1)                            // Amount in KES
+    .accountReference("ORDER-123")        // Your reference
+    .description("Payment for Order 123") // Optional - auto-generated if omitted
+    // .idempotencyKey("custom-key")     // Optional - auto-generated if omitted
+    .build();
 
 StkPushResponse response = client.initiateStkPush(request);
 
 if (response.isAccepted()) {
     System.out.println("Checkout ID: " + response.checkoutRequestID());
     System.out.println("Merchant ID: " + response.merchantRequestID());
+    System.out.println("📱 Check your phone for the STK Push prompt.");
 } else {
     System.out.println("Request rejected: " + response.responseDescription());
 }
 ```
+
+**The builder automatically handles:**
+- Generating a unique `idempotencyKey` if not provided
+- Setting `PartyA` as the `phoneNumber` and `PartyB` as the `businessShortCode`
+- Default `description` if omitted
 
 ### 3. Handle Webhook Callback
 
@@ -511,17 +516,14 @@ public class PaymentController {
         // Create order with PENDING status
         orderService.createOrder(request.getOrderId(), request.getPhoneNumber(), request.getAmount());
         
-        // Build STK Push request
-        StkPushRequest stkRequest = new StkPushRequest(
-            "174379",
-            request.getPhoneNumber(),
-            request.getAmount(),
-            request.getPhoneNumber(),
-            "174379",
-            request.getOrderId(),
-            "Payment for order: " + request.getOrderId(),
-            UUID.randomUUID().toString()
-        );
+        // ✅ Build STK Push request using Builder pattern
+        StkPushRequest stkRequest = StkPushRequest.builder()
+            .businessShortCode("174379")
+            .phoneNumber(request.getPhoneNumber())
+            .amount(request.getAmount())
+            .accountReference(request.getOrderId())
+            .description("Payment for order: " + request.getOrderId())
+            .build();  // ✅ idempotencyKey auto-generated!
         
         // Send STK Push
         StkPushResponse response = mpesaClient.initiateStkPush(stkRequest);
