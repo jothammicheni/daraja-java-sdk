@@ -31,6 +31,12 @@ public class WebhookParser {
 
         Map<String, Object> metadata = extractCallbackMetadata(source);
 
+        // ✅ Extract phone number - try "PhoneNumber" first, then "MSISDN"
+        String phone = getString(source, "PhoneNumber");
+        if (phone == null) {
+            phone = getString(source, "MSISDN");
+        }
+
         WebhookPayload.Builder builder = WebhookPayload.builder()
                 .merchantRequestId(getString(source, "MerchantRequestID"))
                 .checkoutRequestId(getString(source, "CheckoutRequestID"))
@@ -40,7 +46,7 @@ public class WebhookParser {
                 .transactionId(getString(source, "TransID"))
                 .transactionDate(getString(source, "TransTime"))
                 .amount(getString(source, "TransAmount"))
-                .phoneNumber(getString(source, "PhoneNumber"))
+                .phoneNumber(phone)
                 .accountReference(getString(source, "AccountReference"))
                 .receiptNumber(getString(source, "ReceiptNumber"))
                 .customerMessage(getString(source, "CustomerMessage"));
@@ -52,7 +58,7 @@ public class WebhookParser {
             String amount = getMetadataValue(metadata, "Amount");
             String receipt = getMetadataValue(metadata, "MpesaReceiptNumber");
             String transDate = getMetadataValue(metadata, "TransactionDate");
-            String phone = getMetadataValue(metadata, "PhoneNumber");
+            String phoneMeta = getMetadataValue(metadata, "PhoneNumber");
 
             if (amount != null) builder.amount(amount);
             if (receipt != null) {
@@ -62,7 +68,7 @@ public class WebhookParser {
                 builder.transactionId(receipt);
             }
             if (transDate != null) builder.transactionDate(transDate);
-            if (phone != null) builder.phoneNumber(phone);
+            if (phoneMeta != null) builder.phoneNumber(phoneMeta);
         }
 
         return builder.build();
