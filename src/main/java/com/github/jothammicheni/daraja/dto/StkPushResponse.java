@@ -1,15 +1,15 @@
 package com.github.jothammicheni.daraja.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import java.io.Serializable;
 import java.time.Instant;
 
 public record StkPushResponse(
-        @JsonProperty("MerchantRequestID") String merchantRequestID,
-        @JsonProperty("CheckoutRequestID") String checkoutRequestID,
-        @JsonProperty("ResponseCode") String responseCode,
-        @JsonProperty("ResponseDescription") String responseDescription,
-        @JsonProperty("CustomerMessage") String customerMessage,
+        @JsonAlias("MerchantRequestID") String merchantRequestID,
+        @JsonAlias("CheckoutRequestID") String checkoutRequestID,
+        @JsonAlias("ResponseCode") String responseCode,
+        @JsonAlias("ResponseDescription") String responseDescription,
+        @JsonAlias("CustomerMessage") String customerMessage,
         String idempotencyKey,
         Instant timestamp
 ) implements Serializable {
