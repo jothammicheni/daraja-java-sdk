@@ -13,7 +13,8 @@ A production-ready, pure Java SDK for Safaricom's Daraja M-Pesa API. Built for J
 ## Key Features
 
 - **Pure Java 17+**: No Spring or framework dependencies required
-- **Zero External Dependencies**: Jackson removed - pure Java only
+- **Zero External Dependencies**: Pure Java, no Jackson or other libraries
+- **Clean Builder Pattern**: Fluent API for constructing requests with smart auto-fill
 - **Automatic Token Management**: Handles OAuth token acquisition and refresh
 - **Built-in Idempotency**: Prevents duplicate payments with Redis or local cache
 - **Phone Number Validation**: Supports all Kenyan formats (+254, 254, 07, 7, 01)
@@ -406,32 +407,52 @@ MpesaConfig config = new MpesaConfig.Builder(
 MpesaClient client = new DefaultMpesaClient(config);
 ```
 
-### 2. Initiate STK Push Payment
+### 2. Initiate STK Push Payment (Builder Pattern)
+
+> **✨ Builder Pattern Benefits**: The builder automatically handles PartyA, PartyB, idempotency key, and description - you only need to provide the essentials!
 
 ```java
 import com.github.jothammicheni.daraja.dto.StkPushRequest;
 import com.github.jothammicheni.daraja.dto.StkPushResponse;
-import java.util.UUID;
 
-StkPushRequest request = new StkPushRequest(
-    "174379",                              // Business Shortcode
-    "254708374149",                        // Phone (any Kenyan format accepted)
-    1,                                     // Amount in KES
-    "254708374149",                        // Party A (same as phone)
-    "174379",                              // Party B (same as shortcode)
-    "ORDER-123",                           // Your order/reference ID
-    "Payment for order ORDER-123",         // Transaction description
-    UUID.randomUUID().toString()           // Idempotency Key - prevents duplicates
-);
+// ✅ Using Builder Pattern - Clean, readable, auto-fill
+StkPushRequest request = StkPushRequest.builder()
+    .businessShortCode("174379")          // Your PayBill/Till number
+    .phoneNumber("254708374149")          // Any Kenyan format works
+    .amount(100)                          // Amount in KES
+    .accountReference("ORDER-123")        // Your reference
+    // .idempotencyKey("custom-key")     // Optional - auto-generated if omitted
+    // .description("Custom description") // Optional - auto-generated if omitted
+    .build();
 
 StkPushResponse response = client.initiateStkPush(request);
 
 if (response.isAccepted()) {
-    System.out.println("Checkout ID: " + response.checkoutRequestID());
-    System.out.println("Merchant ID: " + response.merchantRequestID());
+    System.out.println("✅ Checkout ID: " + response.checkoutRequestID());
+    System.out.println("📱 Check your phone for the STK Push prompt.");
 } else {
-    System.out.println("Request rejected: " + response.responseDescription());
+    System.out.println("❌ Request rejected: " + response.responseDescription());
 }
+```
+
+**The builder automatically handles:**
+- ✅ Generates a unique `idempotencyKey` if not provided (prevents duplicate payments)
+- ✅ Sets `PartyA` as the `phoneNumber` (customer's phone)
+- ✅ Sets `PartyB` as the `businessShortCode` (your business)
+- ✅ Provides a default `description` if omitted
+
+**Example with custom values:**
+```java
+StkPushRequest request = StkPushRequest.builder()
+    .businessShortCode("174379")
+    .phoneNumber("254708374149")
+    .amount(100)
+    .partyA("254700000000")              // Override PartyA
+    .partyB("600000")                    // Override PartyB
+    .accountReference("ORDER-123")
+    .description("Custom payment description")
+    .idempotencyKey("my-custom-key-123") // Custom idempotency key
+    .build();
 ```
 
 ### 3. Handle Webhook Callback
@@ -458,7 +479,7 @@ public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<Strin
         System.out.println("Receipt: " + payload.getReceiptNumber());
         
         // YOUR BUSINESS LOGIC HERE
-        // - Update order status to "PAID"
+        // - Update order status to "PAID".
         // - Send confirmation email
         // - Release inventory
     } else if ("1032".equals(payload.getResultCode())) {
@@ -476,7 +497,7 @@ public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<Strin
 
 ---
 
-## Complete Spring Boot Example
+## Complete Spring Boot Example with Builder
 
 ```java
 package com.example.payment;
@@ -511,17 +532,14 @@ public class PaymentController {
         // Create order with PENDING status
         orderService.createOrder(request.getOrderId(), request.getPhoneNumber(), request.getAmount());
         
-        // Build STK Push request
-        StkPushRequest stkRequest = new StkPushRequest(
-            "174379",
-            request.getPhoneNumber(),
-            request.getAmount(),
-            request.getPhoneNumber(),
-            "174379",
-            request.getOrderId(),
-            "Payment for order: " + request.getOrderId(),
-            UUID.randomUUID().toString()
-        );
+        // ✅ Build STK Push request using Builder pattern with auto-fill
+        StkPushRequest stkRequest = StkPushRequest.builder()
+            .businessShortCode("174379")
+            .phoneNumber(request.getPhoneNumber())
+            .amount(request.getAmount())
+            .accountReference(request.getOrderId())
+            .description("Payment for order: " + request.getOrderId())
+            .build();  // ✅ idempotencyKey auto-generated!
         
         // Send STK Push
         StkPushResponse response = mpesaClient.initiateStkPush(stkRequest);

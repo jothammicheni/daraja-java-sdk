@@ -1,203 +1,558 @@
-# Daraja M-Pesa Spring Boot Starter
+# Daraja M-Pesa SDK
 
-[![Maven Central](https://shields.io)](https://maven.org)
-[![Java Version](https://shields.io)](https://oracle.com)
-[![Spring Boot](https://shields.io)](https://spring.io)
-[![License](https://shields.io)](https://opensource.org)
+[![JitPack](https://img.shields.io/badge/JitPack-1.0.0-blue)](https://jitpack.io/#jothammicheni/daraja-java-sdk)
+[![Java Version](https://img.shields.io/badge/Java-17+-orange)](https://adoptium.net/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green)](https://opensource.org/licenses/Apache-2.0)
 
-A modern, cloud-native Spring Boot Starter SDK for Safaricom's Daraja M-Pesa API. Built natively using Java 17+ Records, featuring robust distributed **Idempotency guards via Redis**, **automated proxy-aware IP validation matching Safaricom subnets**, and **Spring ApplicationEvent streaming**.
+A production-ready, pure Java SDK for Safaricom's Daraja M-Pesa API. Built for Java 17+ with **zero external dependencies**, it handles OAuth token management, idempotency, phone number validation, and webhook parsing so you don't have to.
 
----
-
-## ⚠️ Project Status: Work in Progress 🛠️
-This library is currently under active development. Some features may change, and optimizations are ongoing. It is **not yet recommended for critical production environments** without thorough testing. 
+> ⚠️ **Sandbox by default.** This SDK ships configured for Safaricom's sandbox environment. Don't point it at production credentials until you've explicitly set `MPESA_ENVIRONMENT=production` and verified your configuration — mixing sandbox keys with production endpoints (or vice versa) will fail or misbehave.
 
 ---
 
-## 🚀 Key Features
+## Table of Contents
 
-* **Zero Boilerplate:** Autoconfigures seamlessly out of the box with your host properties.
-* **Modern Java Architecture:** Built using clean, type-safe Java 17+ compact record constructors.
-* **Double-Debit Prevention:** Implements true atomic idempotency controls across single or multi-instance systems.
-* **Enterprise Security:** Built-in protection against IP spoofing that accurately verifies Safaricom production gateway subnets.
-* **Asynchronous Webhook Streaming:** Automatically converts ugly, deeply nested Daraja callbacks into flat Java events.
+- [Why this SDK](#why-this-sdk)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Building a Payment Flow](#building-a-payment-flow)
+- [Event-Driven Architecture (Optional)](#event-driven-architecture-optional)
+- [Sandbox Testing](#sandbox-testing)
+- [Error Handling](#error-handling)
+- [Security](#security)
+- [Contributing](#contributing)
+- [Support](#support)
 
 ---
 
-## 📦 1. Installation (Local Compilation)
+## Why this SDK
 
-While the project is in progress, clone and build it locally to your Maven repository:
+- **Pure Java 17+** — no Spring or framework lock-in required
+- **Zero external dependencies** — no Jackson, no bloat
+- **Fluent builder API** — construct requests with smart auto-fill defaults
+- **Automatic token management** — OAuth acquisition and refresh handled for you
+- **Built-in idempotency** — duplicate-payment protection out of the box, with optional Redis backing for multi-instance deployments
+- **Full Kenyan phone number support** — `+254`, `254`, `07`, `7`, `01` formats all normalize correctly
+- **Enterprise-grade webhook security** — IP validation and structured, readable logs
+- **~290 fewer lines of boilerplate** per integration compared to hand-rolling this yourself
+- **Optional event system** — react to payment outcomes without writing webhook-handling logic
 
-```bash
-git clone https://github.com
-cd daraja-java-sdk
-mvn clean install
+---
+
+## Installation
+
+**Maven** — add the JitPack repository:
+
+```xml
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
 ```
 
-Then, add the dependency to your Spring Boot application's `pom.xml`:
+Then add the dependency. Pin to a release for anything beyond local testing:
 
 ```xml
 <dependency>
     <groupId>com.github.jothammicheni</groupId>
-    <artifactId>daraja-springboot-starter-jdk</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <artifactId>daraja-java-sdk</artifactId>
+    <version>v1.0.0</version>
 </dependency>
 ```
 
+<details>
+<summary>Using the latest development build instead</summary>
+
+```xml
+<dependency>
+    <groupId>com.github.jothammicheni</groupId>
+    <artifactId>daraja-java-sdk</artifactId>
+    <version>main-SNAPSHOT</version>
+</dependency>
+```
+</details>
+
+<details>
+<summary>Gradle</summary>
+
+```gradle
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+    implementation 'com.github.jothammicheni:daraja-java-sdk:v1.0.0'
+}
+```
+</details>
+
 ---
 
-## ⚙️ 2. Properties Configuration
+## Quick Start
 
-Configure your environment settings inside your application's `application.properties` or `application.yml` file.
+1. Create a `.env` file in your project root (never commit this — add it to `.gitignore`):
 
-### Option A: Local Sandbox Staging
-Perfect for local development. This mode uses local in-memory caching and skips gateway IP checking so you can test endpoints from your laptop.
-
-```properties
-# Safaricom Developer Credentials
-mpesa.daraja.consumer-key=your_sandbox_consumer_key
-mpesa.daraja.consumer-secret=your_sandbox_consumer_secret
-mpesa.daraja.api-secret=your_sandbox_passkey
-
-# Target Environment & Domain Routing
-mpesa.daraja.environment=sandbox
-mpesa.daraja.app-url=https://ngrok-free.app
-
-# Infrastructure Settings (Local Fallback)
-mpesa.daraja.cache-type=local
-mpesa.daraja.enable-ip-validation=false
-mpesa.daraja.is-behind-proxy=false
-
-# Optional Route Customization (Defaults to /cb/confirmation)
-mpesa.daraja.confirmation-url-path=/v1/mpesa/payment-hook
+```env
+MPESA_CONSUMER_KEY=your_consumer_key
+MPESA_CONSUMER_SECRET=your_consumer_secret
+MPESA_API_SECRET=your_api_passkey
+MPESA_APP_URL=https://your-app.onrender.com
+MPESA_CALLBACK_URL=https://your-app.onrender.com/api/payment/callback
 ```
 
-### Option B: Real Money Production
-Use this setup on live production servers. It enforces Redis distributed state tracking and turns on the network firewalls.
+2. Initialize the client:
+
+```java
+import com.github.jothammicheni.daraja.client.MpesaClient;
+import com.github.jothammicheni.daraja.client.DefaultMpesaClient;
+import com.github.jothammicheni.daraja.config.MpesaConfig;
+import com.github.jothammicheni.daraja.config.MpesaEnvironment;
+
+MpesaConfig config = new MpesaConfig.Builder(
+        System.getenv("MPESA_CONSUMER_KEY"),
+        System.getenv("MPESA_CONSUMER_SECRET"),
+        System.getenv("MPESA_API_SECRET")
+)
+        .environment(MpesaEnvironment.valueOf(
+                System.getenv().getOrDefault("MPESA_ENVIRONMENT", "sandbox").toUpperCase()
+        ))
+        .appUrl(System.getenv("MPESA_APP_URL"))
+        .callbackUrl(System.getenv("MPESA_CALLBACK_URL"))
+        .build();
+
+MpesaClient client = new DefaultMpesaClient(config);
+```
+
+3. Send a payment request:
+
+```java
+import com.github.jothammicheni.daraja.dto.StkPushRequest;
+import com.github.jothammicheni.daraja.dto.StkPushResponse;
+
+StkPushRequest request = StkPushRequest.builder()
+        .businessShortCode("174379")
+        .phoneNumber("254708374149")
+        .amount(100)
+        .accountReference("ORDER-123")
+        .build(); // idempotencyKey is auto-generated
+
+StkPushResponse response = client.initiateStkPush(request);
+
+if (response.isAccepted()) {
+    System.out.println("✅ Checkout ID: " + response.checkoutRequestID());
+} else {
+    System.out.println("❌ Rejected: " + response.responseDescription());
+}
+```
+
+That's the whole loop for a first payment. See [Building a Payment Flow](#building-a-payment-flow) for handling the webhook callback and a complete controller example.
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `MPESA_CONSUMER_KEY` | ✅ | — | M-Pesa API consumer key |
+| `MPESA_CONSUMER_SECRET` | ✅ | — | M-Pesa API consumer secret |
+| `MPESA_API_SECRET` | ✅ | — | API passkey, used for webhook validation |
+| `MPESA_APP_URL` | ✅ | — | Your application's public URL |
+| `MPESA_CALLBACK_URL` | ✅ | — | Full webhook callback URL |
+| `MPESA_ENVIRONMENT` | – | `sandbox` | `sandbox` or `production` |
+| `MPESA_CACHE_TYPE` | – | `local` | `local` (in-memory) or `redis` (shared) |
+| `MPESA_CONNECT_TIMEOUT` | – | `10` | Connection timeout, in seconds |
+| `MPESA_READ_TIMEOUT` | – | `30` | Read timeout, in seconds |
+| `MPESA_ENABLE_IP_VALIDATION` | – | `false` | Validate webhook source IP |
+| `MPESA_BEHIND_PROXY` | – | `false` | Set `true` if your app sits behind a reverse proxy |
+| `MPESA_CONFIRMATION_URL_PATH` | – | `/cb/confirmation` | Confirmation webhook path |
+| `MPESA_VALIDATION_URL_PATH` | – | `/cb/validation` | Validation webhook path |
+
+> 🔒 **Never commit your `.env` file.** These credentials grant access to a live payment system.
+
+<details>
+<summary>Full <code>.env</code> template</summary>
+
+```env
+# Required — from the Safaricom Developer Portal
+MPESA_CONSUMER_KEY=your_consumer_key
+MPESA_CONSUMER_SECRET=your_consumer_secret
+MPESA_API_SECRET=your_api_passkey
+
+# Required — application URLs
+MPESA_APP_URL=https://your-app.onrender.com
+MPESA_CALLBACK_URL=https://your-app.onrender.com/api/payment/callback
+
+# Optional
+MPESA_ENVIRONMENT=sandbox
+MPESA_CACHE_TYPE=local
+MPESA_CONNECT_TIMEOUT=10
+MPESA_READ_TIMEOUT=30
+MPESA_ENABLE_IP_VALIDATION=false
+MPESA_BEHIND_PROXY=false
+MPESA_CONFIRMATION_URL_PATH=/cb/confirmation
+MPESA_VALIDATION_URL_PATH=/cb/validation
+```
+</details>
+
+### Spring Boot
+
+<details>
+<summary><code>application.yml</code></summary>
+
+```yaml
+mpesa:
+  daraja:
+    consumer-key: ${MPESA_CONSUMER_KEY}
+    consumer-secret: ${MPESA_CONSUMER_SECRET}
+    api-secret: ${MPESA_API_SECRET}
+    app-url: ${MPESA_APP_URL}
+    callback-url: ${MPESA_CALLBACK_URL}
+    environment: ${MPESA_ENVIRONMENT:sandbox}
+    cache-type: ${MPESA_CACHE_TYPE:local}
+    connect-timeout: ${MPESA_CONNECT_TIMEOUT:10}
+    read-timeout: ${MPESA_READ_TIMEOUT:30}
+    enable-ip-validation: ${MPESA_ENABLE_IP_VALIDATION:false}
+    is-behind-proxy: ${MPESA_BEHIND_PROXY:false}
+    confirmation-url-path: ${MPESA_CONFIRMATION_URL_PATH:/cb/confirmation}
+    validation-url-path: ${MPESA_VALIDATION_URL_PATH:/cb/validation}
+```
+</details>
+
+<details>
+<summary><code>application.properties</code></summary>
 
 ```properties
-# Live Production Credentials from Daraja Portal
-mpesa.daraja.consumer-key=LIVE_PRODUCTION_CONSUMER_KEY_FROM_SAFARICOM
-mpesa.daraja.consumer-secret=LIVE_PRODUCTION_CONSUMER_SECRET_FROM_SAFARICOM
-mpesa.daraja.api-secret=LIVE_PRODUCTION_LIPA_NA_MPESA_PASSKEY
+mpesa.daraja.consumer-key=${MPESA_CONSUMER_KEY}
+mpesa.daraja.consumer-secret=${MPESA_CONSUMER_SECRET}
+mpesa.daraja.api-secret=${MPESA_API_SECRET}
+mpesa.daraja.app-url=${MPESA_APP_URL}
+mpesa.daraja.callback-url=${MPESA_CALLBACK_URL}
+mpesa.daraja.environment=${MPESA_ENVIRONMENT:sandbox}
+mpesa.daraja.cache-type=${MPESA_CACHE_TYPE:local}
+mpesa.daraja.connect-timeout=${MPESA_CONNECT_TIMEOUT:10}
+mpesa.daraja.read-timeout=${MPESA_READ_TIMEOUT:30}
+mpesa.daraja.enable-ip-validation=${MPESA_ENABLE_IP_VALIDATION:false}
+mpesa.daraja.is-behind-proxy=${MPESA_BEHIND_PROXY:false}
+mpesa.daraja.confirmation-url-path=${MPESA_CONFIRMATION_URL_PATH:/cb/confirmation}
+mpesa.daraja.validation-url-path=${MPESA_VALIDATION_URL_PATH:/cb/validation}
+```
+</details>
 
-# Target Environment (Automatically switches base to https://safaricom.co.ke)
+<details>
+<summary>Sandbox vs. production profiles</summary>
+
+**Sandbox (development)**
+```properties
+mpesa.daraja.environment=sandbox
+mpesa.daraja.cache-type=local
+mpesa.daraja.enable-ip-validation=false
+mpesa.daraja.app-url=http://localhost:8080
+mpesa.daraja.callback-url=http://localhost:8080/api/payment/callback
+```
+
+**Production (live payments)**
+```properties
+# ⚠️ Only enable after verifying every value below
 mpesa.daraja.environment=production
-mpesa.daraja.app-url=https://yourcompany.co.ke
-
-# Infrastructure Settings (Distributed Cloud Multi-Instance ready)
 mpesa.daraja.cache-type=redis
 mpesa.daraja.enable-ip-validation=true
 mpesa.daraja.is-behind-proxy=true
+mpesa.daraja.app-url=https://your-production-domain.com
+mpesa.daraja.callback-url=https://your-production-domain.com/api/payment/callback
 
-# Custom Route Path
-mpesa.daraja.confirmation-url-path=/v1/mpesa/payment-hook
-
-# Connect your application's standard Redis Server configuration
-spring.data.redis.host=your-redis-cluster-url
-spring.data.redis.port=6379
+spring.data.redis.host=${REDIS_HOST}
+spring.data.redis.port=${REDIS_PORT}
+spring.data.redis.password=${REDIS_PASSWORD}
 ```
+</details>
+
+### Redis (Optional)
+
+The SDK uses an **in-memory local cache** by default — fine for single-instance deployments. For production with multiple instances, switch to Redis so token and idempotency caches are shared across them.
+
+```env
+MPESA_CACHE_TYPE=redis
+```
+
+| Cache Type | Token Cache | Idempotency Cache | Best For |
+| :--- | :--- | :--- | :--- |
+| `local` | Per instance | Per instance | Development, single instance |
+| `redis` | Shared | Shared | Production, multiple instances |
+
+<details>
+<summary>Redis connection settings + Docker setup</summary>
+
+```properties
+mpesa.daraja.cache-type=redis
+spring.data.redis.host=localhost
+spring.data.redis.port=6379
+spring.data.redis.password=your-redis-password
+spring.data.redis.timeout=5000ms
+
+# Connection pool (optional)
+spring.data.redis.lettuce.pool.max-active=10
+spring.data.redis.lettuce.pool.max-idle=5
+spring.data.redis.lettuce.pool.min-idle=2
+```
+
+```bash
+# Quick local Redis
+docker run -d -p 6379:6379 --name redis redis:alpine
+```
+</details>
 
 ---
 
-## 💻 3. Quickstart Code Snippets
+## Building a Payment Flow
 
-### Step 1: Trigger an M-Pesa STK Push
-Inject the `MpesaClient` directly into your business service to trigger a phone STK prompt. Always provide a unique `idempotencyKey` per customer request to prevent duplicate transactions.
+### 1. Initiate a payment
 
 ```java
-package com.yourcompany.billing.service;
+import com.github.jothammicheni.daraja.dto.StkPushRequest;
+import com.github.jothammicheni.daraja.dto.StkPushResponse;
 
-import com.github.jothammicheni.daraja_springboot_starter_jdk.core.dto.StkPushRequest;
-import com.github.jothammicheni.daraja_springboot_starter_jdk.core.dto.StkPushResponse;
-import com.github.jothammicheni.daraja_springboot_starter_jdk.core.service.MpesaClient;
-import org.springframework.stereotype.Service;
+StkPushRequest request = StkPushRequest.builder()
+        .businessShortCode("174379")      // Your PayBill/Till number
+        .phoneNumber("254708374149")      // Any Kenyan format works
+        .amount(100)                      // Amount in KES
+        .accountReference("ORDER-123")
+        .build();                         // idempotencyKey auto-generated
 
-@Service
-public class PaymentProcessingService {
+StkPushResponse response = client.initiateStkPush(request);
+```
+
+The builder fills in the details you'd otherwise repeat every time: it generates a unique `idempotencyKey` if you don't supply one (so a retried request can't double-charge a customer), sets `PartyA`/`PartyB` from the phone number and short code, and falls back to a sensible default `description`.
+
+### 2. Handle the webhook callback
+
+Safaricom's STK Push callback logs automatically — no code required for that part:
+
+```
+📨 CONFIRMATION WEBHOOK
+   Time: 2026-08-15T07:33:00.050Z
+   Status: ✅ SUCCESS
+   Checkout ID: ws_CO_150820261032480113730593
+   Amount: 100.00
+   Receipt: UHF6Z36OYN
+```
+
+Parse it into a structured object and branch on the result:
+
+```java
+import com.github.jothammicheni.daraja.dto.webhook.WebhookPayload;
+import com.github.jothammicheni.daraja.dto.webhook.WebhookResponse;
+import com.github.jothammicheni.daraja.webhook.WebhookParser;
+
+@PostMapping("/api/payment/callback")
+public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<String, Object> rawPayload) {
+    WebhookPayload payload = WebhookParser.parseWebhook(rawPayload);
+
+    if (payload.isSuccess()) {
+        // Update order status, send confirmation, release inventory, etc.
+    } else if ("1032".equals(payload.getResultCode())) {
+        // User cancelled the prompt
+    } else {
+        // Payment failed — see payload.getResultDescription()
+    }
+
+    return ResponseEntity.ok(WebhookResponse.success().toMap());
+}
+```
+
+> **Note:** the STK Push callback identifies the transaction by `CheckoutRequestID`, not by your account reference — Safaricom doesn't echo that field back on this webhook. Keep your own `checkoutRequestID → orderId` mapping (registered right after `initiateStkPush()` succeeds) so you can look the order back up when the callback arrives.
+
+### 3. Full controller example
+
+```java
+@RestController
+@RequestMapping("/api/payment")
+public class PaymentController {
 
     private final MpesaClient mpesaClient;
+    private final OrderService orderService;
 
-    public PaymentProcessingService(MpesaClient mpesaClient) {
+    public PaymentController(MpesaClient mpesaClient, OrderService orderService) {
         this.mpesaClient = mpesaClient;
+        this.orderService = orderService;
     }
 
-    public void collectPayment(String orderId, String phoneNumber, double amount) {
-        // Build the type-safe request payload
-        StkPushRequest request = new StkPushRequest(
-                "req-idempotency-" + orderId, // ⚡ Unique Key prevents accidental double clicking!
-                "174379",                     // Business Short Code (PayBill/Till)
-                amount,
-                phoneNumber,                  // e.g., 2547XXXXXXXX
-                orderId,                      // Account Reference
-                "Payment for Order " + orderId
-        );
+    @PostMapping("/initiate")
+    public ResponseEntity<StkPushResponse> initiatePayment(@RequestBody PaymentRequest request) {
+        orderService.createOrder(request.getOrderId(), request.getPhoneNumber(), request.getAmount());
 
-        // Send request to Safaricom Daraja
-        StkPushResponse response = mpesaClient.initiateStkPush(request);
+        StkPushRequest stkRequest = StkPushRequest.builder()
+                .businessShortCode("174379")
+                .phoneNumber(request.getPhoneNumber())
+                .amount(request.getAmount())
+                .accountReference(request.getOrderId())
+                .description("Payment for order: " + request.getOrderId())
+                .build();
 
-        if (response.isAccepted()) {
-            System.out.println("Prompt sent to phone! CheckoutRequestID: " + response.checkoutRequestID());
+        StkPushResponse response = mpesaClient.initiateStkPush(stkRequest);
+        orderService.registerCheckoutId(response.checkoutRequestID(), request.getOrderId());
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/callback")
+    public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<String, Object> rawPayload) {
+        WebhookPayload payload = WebhookParser.parseWebhook(rawPayload);
+
+        if (payload.isSuccess()) {
+            orderService.markAsPaid(payload);
+        } else if ("1032".equals(payload.getResultCode())) {
+            orderService.markAsCancelled(payload);
         } else {
-            System.err.println("Safaricom rejected request early: " + response.responseDescription());
+            orderService.markAsFailed(payload);
         }
+
+        return ResponseEntity.ok(WebhookResponse.success().toMap());
     }
 }
 ```
 
-### Step 2: Listen for Payment Completions
-You do not need to wire up controller endpoints manually. When Safaricom returns a payment callback, this starter processes it and broadcasts it across your application. Simply attach an `@EventListener` to catch the payment result:
+---
+
+## Event-Driven Architecture (Optional)
+
+If you'd rather keep business logic out of your controller entirely, the SDK ships an optional event system.
+
+**Without events**, everything ends up crammed into the callback handler:
 
 ```java
-package com.yourcompany.billing.listener;
+@PostMapping("/callback")
+public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<String, Object> rawPayload) {
+    WebhookPayload payload = WebhookParser.parseWebhook(rawPayload);
+    if (payload.isSuccess()) {
+        orderService.markAsPaid(payload.getAccountReference());
+        emailService.sendConfirmation(payload.getPhoneNumber());
+        inventoryService.release(payload.getAccountReference());
+        analyticsService.trackPayment(payload);
+    }
+    return ResponseEntity.ok(WebhookResponse.success().toMap());
+}
+```
 
-import com.github.jothammicheni.daraja_springboot_starter_jdk.core.dto.MpesaPaymentResult;
-import org.springframework.context.event.EventListener;
-import org.springframework.stereotype.Component;
+**With events**, the controller just parses and publishes:
 
+```java
+@PostMapping("/callback")
+public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<String, Object> rawPayload) {
+    WebhookPayload payload = WebhookParser.parseWebhook(rawPayload);
+    MpesaEventPublisher.getInstance().publishWebhookEvent(payload);
+    return ResponseEntity.ok(WebhookResponse.success().toMap());
+}
+```
+
+...and the actual business logic lives in a listener, wherever it belongs in your codebase:
+
+```java
 @Component
-public class MpesaCallbackListener {
+public class PaymentEventListener {
 
     @EventListener
-    public void onMpesaPaymentReceived(MpesaPaymentResult payment) {
-        String checkoutId = payment.checkoutRequestId();
+    public void onPaymentSuccess(PaymentSuccessEvent event) {
+        orderService.markAsPaid(event.getAccountReference());
+        emailService.sendConfirmation(event.getPhoneNumber());
+        inventoryService.release(event.getAccountReference());
+        analyticsService.trackPayment(event);
+    }
 
-        if (payment.isSuccess()) {
-            System.out.println("💰 CASH RECEIVED!");
-            System.out.println("M-Pesa Receipt Number: " + payment.mpesaReceiptNumber());
-            System.out.println("Amount Collected: KES " + payment.amount());
-            System.out.println("Customer Mobile: " + payment.phoneNumber());
-            
-            // TODO: Update your internal database status to "PAID" here!
-        } else {
-            System.err.println("❌ Transaction Failed or Cancelled by User.");
-            System.err.println("Reason: " + payment.resultDesc() + " (Code: " + payment.resultCode() + ")");
-        }
+    @EventListener
+    public void onPaymentFailed(PaymentFailedEvent event) {
+        orderService.markAsFailed(event.getAccountReference());
+        notificationService.notifyUser(event.getPhoneNumber(), event.getResultDescription());
+    }
+
+    @EventListener
+    public void onPaymentCancelled(PaymentCancelledEvent event) {
+        orderService.markAsCancelled(event.getAccountReference());
+        notificationService.notifyUser(event.getPhoneNumber(), "You cancelled the payment");
     }
 }
 ```
 
 ---
 
-## 🤝 Contributing & Community Collaboration
+## Sandbox Testing
 
-The doors are wide open! Since this SDK is actively evolving, we warmly welcome developer contributions to make it the most robust open-source M-Pesa library available.
+> ⚠️ Sandbox only — do not use these values with production credentials.
 
-### How to Get Involved:
-1. **Fork** the repository and clone your variant.
-2. Create a new branch for your feature (`git checkout -b feature/amazing-feature`).
-3. Commit your implementations (`git commit -m 'Add amazing feature'`).
-4. Push to the branch (`git push origin feature/amazing-feature`).
-5. Open a **Pull Request**.
+**Test phone numbers:**
 
-For architectural questions, direct collaborations, or feedback, feel free to reach out directly via email at [jothammurimi21@gmail.com](mailto:jothammurimi21@gmail.com).
+| Phone Number | Type |
+| :--- | :--- |
+| `254708374149` | Prepaid |
+| `254113730593` | Postpaid |
+
+On the simulated prompt, enter PIN **`12345`** and select **`1`** to confirm.
+
+**Result codes you'll see while testing:**
+
+| Scenario | Result Code |
+| :--- | :--- |
+| Successful payment | `0` |
+| User cancellation | `1032` |
+| Insufficient funds | `2001` |
+| Timeout (no response) | `1020` |
+| Amount exceeds allowed limit | `17` |
 
 ---
 
-## 🔒 Security Policy & Disclosures
+## Error Handling
 
-We take security issues very seriously. If you find a security vulnerability within this starter library, please **do not open a public GitHub issue**. Instead, follow our responsible disclosure policy.
+| Code | Meaning | Suggested action |
+| :--- | :--- | :--- |
+| `0` | Success | Mark payment complete |
+| `1032` | User cancelled | Update order to `CANCELLED` |
+| `1020` | Timeout | Allow the user to retry |
+| `2001` | Insufficient funds | Notify the user |
+| `17` | Rule limited | Check your amount limits |
 
-* **Reporting Email:** Please send your vulnerability findings directly to [jothammicheni@gmail.com](mailto:jothammicheni@gmail.com).
-* **Expected Response:** We will acknowledge your email within 24 hours and provide an estimated fix timeline.
-* **Coordination:** We ask that you keep information private until we publish a patch release to protect production platforms using this SDK.
+```java
+try {
+    StkPushResponse response = client.initiateStkPush(request);
+} catch (MpesaApiException e) {
+    System.err.println("Error code: " + e.getErrorCode().getCode());
+    System.err.println("Message: " + e.getMessage());
+} catch (Exception e) {
+    System.err.println("Unexpected error: " + e.getMessage());
+}
+```
+
+---
+
+## Security
+
+Found a vulnerability? Please don't open a public issue.
+
+1. Email [jothammurimi21@gmail.com](mailto:jothammurimi21@gmail.com) with details and steps to reproduce
+2. We'll acknowledge within 24 hours and share an estimated fix timeline
+3. Please keep the report private until a patch ships
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make sure tests pass
+4. Document any new behavior
+5. Open a pull request against `dev`
+
+---
+
+## Support
+
+- **Issues:** [GitHub Issues](https://github.com/jothammicheni/daraja-java-sdk/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/jothammicheni/daraja-java-sdk/discussions)
+- **Email:** [jothammurimi21@gmail.com](mailto:jothammurimi21@gmail.com)
+
+---
+
+Licensed under [Apache License 2.0](LICENSE).
