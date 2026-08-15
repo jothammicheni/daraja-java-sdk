@@ -17,6 +17,7 @@ A production-ready, pure Java SDK for Safaricom's Daraja M-Pesa API. Built for J
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Building a Payment Flow](#building-a-payment-flow)
+- [API Performance Logging](#api-performance-logging)
 - [Event-Driven Architecture (Optional)](#event-driven-architecture-optional)
 - [Sandbox Testing](#sandbox-testing)
 - [Error Handling](#error-handling)
@@ -37,6 +38,7 @@ A production-ready, pure Java SDK for Safaricom's Daraja M-Pesa API. Built for J
 - **Enterprise-grade webhook security** — IP validation and structured, readable logs
 - **~290 fewer lines of boilerplate** per integration compared to hand-rolling this yourself
 - **Optional event system** — react to payment outcomes without writing webhook-handling logic
+- **Built-in webhook dashboard** — real-time performance logging with zero external services
 
 ---
 
@@ -415,6 +417,111 @@ public class PaymentController {
     }
 }
 ```
+
+---
+
+## API Performance Logging
+
+The SDK includes a built-in webhook dashboard that automatically logs all incoming M-Pesa callbacks in real time, giving you instant visibility into your payment flows.
+
+![Webhook Dashboard](docs/images/logs-dashboard.png)
+
+### How It Works
+
+The dashboard captures every webhook your application receives and displays it in a clean, filterable interface. No external services, no database setup — just add a few lines of code and visit `/dashboard.html`.
+
+| Feature | Description |
+| :--- | :--- |
+| **Real-time monitoring** | Webhooks appear automatically as they arrive |
+| **Auto-refresh** | Dashboard updates every 5 seconds |
+| **Status filtering** | Filter by Success, Failed, Cancelled, or Pending |
+| **Raw JSON view** | Click any entry to inspect the full payload |
+| **Live statistics** | Real-time counts for Total, Success, Failed, and Cancelled |
+| **In-memory storage** | Stores the last 1,000 webhooks |
+| **Zero dependencies** | Pure HTML/JS dashboard — no framework required |
+
+### 1. Enable Dashboard Storage
+
+Add **one line** to your webhook handler:
+
+```java
+import com.github.jothammicheni.daraja.dashboard.WebhookLogStorage;
+
+@PostMapping("/api/payment/callback")
+public ResponseEntity<Map<String, String>> handleCallback(@RequestBody Map<String, Object> rawPayload) {
+    WebhookPayload payload = WebhookParser.parseWebhook(rawPayload);
+
+    // ✅ One line — stores the webhook for the dashboard
+    WebhookLogStorage.store(payload, rawPayload.toString());
+
+    // ... your existing business logic
+    return ResponseEntity.ok(WebhookResponse.success().toMap());
+}
+```
+
+### 2. Add Dashboard Endpoints (Spring Boot)
+
+```java
+package com.example.controller;
+
+import com.github.jothammicheni.daraja.dashboard.WebhookLogEntry;
+import com.github.jothammicheni.daraja.dashboard.WebhookLogStorage;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/webhook-dashboard")
+public class WebhookDashboardController {
+
+    @GetMapping("/logs")
+    public List<WebhookLogEntry> getLogs(@RequestParam(defaultValue = "100") int limit) {
+        return WebhookLogStorage.getRecentLogs(limit);
+    }
+
+    @GetMapping("/stats")
+    public Map<String, Integer> getStats() {
+        return WebhookLogStorage.getStats();
+    }
+
+    @DeleteMapping("/logs")
+    public Map<String, String> clearLogs() {
+        WebhookLogStorage.clearLogs();
+        return Map.of("status", "cleared");
+    }
+}
+```
+
+### 3. Visit the Dashboard
+
+```
+http://localhost:8080/dashboard.html
+```
+
+Here's what it looks like once webhooks start coming in — live status badges, per-entry details, and running totals across Success, Failed, and Cancelled:
+
+![Webhook Dashboard showing live logs with status filters and stats](docs/images/logs-dashboard.png)
+
+### Dashboard Features
+
+| Feature | How It Works |
+| :--- | :--- |
+| **Auto-refresh** | Updates every 5 seconds automatically |
+| **Filter by status** | Click any status badge to filter logs |
+| **View raw JSON** | Click the 📄 button to see the full M-Pesa callback payload |
+| **Clear logs** | Use the 🗑️ Clear button to reset the dashboard |
+| **Live stats** | Counts update in real-time |
+
+### Configuration
+
+The dashboard stores the last **1,000** webhooks in memory. Adjust `MAX_LOGS` in `WebhookLogStorage.java` if needed:
+
+```java
+private static final int MAX_LOGS = 500;  // Store 500 logs instead of 1000
+```
+
+> 💡 **Note:** The dashboard is designed for debugging and monitoring during development. For long-term storage or analytics, implement a database-backed persistence layer.
 
 ---
 
