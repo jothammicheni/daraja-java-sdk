@@ -1,4 +1,3 @@
-```markdown
 # Daraja M-Pesa SDK
 
 [![JitPack](https://img.shields.io/badge/JitPack-1.0.0-blue)](https://jitpack.io/#jothammicheni/daraja-java-sdk)
@@ -425,7 +424,7 @@ public class PaymentController {
 
 The SDK includes a built-in webhook dashboard that automatically logs all incoming M-Pesa callbacks in real time, giving you instant visibility into your payment flows.
 
-![Webhook Dashboard](docs/images/log-dashboard)
+![Webhook Dashboard](docs/images/logs-dashboard.png)
 
 ### How It Works
 
@@ -500,23 +499,9 @@ public class WebhookDashboardController {
 http://localhost:8080/dashboard.html
 ```
 
-### What You'll See
+Here's what it looks like once webhooks start coming in — live status badges, per-entry details, and running totals across Success, Failed, and Cancelled:
 
-```
-📨 Webhook Dashboard
-
-📊 Total: 6   ✅ Success: 2   ❌ Failed: 2   🚫 Cancelled: 2
-
-📋 All  ✅ Success  ❌ Failed  🚫 Cancelled  ⏳ Pending  🔄 Refresh  🗑️ Clear
-
-Time                Checkout ID                    Status     Amount  Phone       Receipt      Result
-8/15, 12:29 PM     ws_CO_150820261229192113730593  FAILED     N/A     N/A         N/A          17
-8/15, 12:29 PM     ws_CO_150820261229037113730593  SUCCESS    1       ******0593  UHF6Z371PA   0
-8/15, 12:28 PM     ws_CO_150820261228314113730593  FAILED     N/A     N/A         N/A          1037
-8/15, 12:28 PM     ws_CO_150820261228167113730593  CANCELLED  N/A     N/A         N/A          1032
-8/15, 12:27 PM     ws_CO_150820261226520113730593  CANCELLED  N/A     N/A         N/A          1032
-8/15, 12:26 PM     ws_CO_150820261226377113730593  SUCCESS    1       ******0593  UHF6Z375QH   0
-```
+![Webhook Dashboard showing live logs with status filters and stats](docs/images/logs-dashboard.png)
 
 ### Dashboard Features
 
@@ -678,4 +663,3 @@ Found a vulnerability? Please don't open a public issue.
 ---
 
 Licensed under [Apache License 2.0](LICENSE).
-```
