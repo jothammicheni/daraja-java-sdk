@@ -4,12 +4,10 @@ import com.github.jothammicheni.daraja.config.MpesaConfig;
 import com.github.jothammicheni.daraja.dto.StkPushRequest;
 import com.github.jothammicheni.daraja.dto.StkPushResponse;
 import com.github.jothammicheni.daraja.exception.MpesaApiException;
+import com.github.jothammicheni.daraja.http.JavaHttpClient;
+import com.github.jothammicheni.daraja.http.MpesaHttpClient;
 import com.github.jothammicheni.daraja.util.PhoneNumberUtils;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -20,6 +18,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Default implementation of the M-Pesa client.
+ * Supports both Java SE (using built-in HttpClient) and Android (via pluggable HTTP client).
+ */
 public class DefaultMpesaClient implements MpesaClient {
 
     private static final java.util.logging.Logger log = java.util.logging.Logger.getLogger(DefaultMpesaClient.class.getName());
@@ -33,7 +35,7 @@ public class DefaultMpesaClient implements MpesaClient {
     private static final Pattern CUSTOMER_MESSAGE_PATTERN = Pattern.compile("\"CustomerMessage\"\\s*:\\s*\"([^\"]*)\"");
 
     private final MpesaConfig config;
-    private final HttpClient httpClient;
+    private final MpesaHttpClient httpClient;          // Pluggable HTTP client (Java SE, Android, etc.)
     private final Map<String, CachedResponse> idempotencyCache;
     private String cachedToken;
     private long tokenExpiryTime;
@@ -56,28 +58,48 @@ public class DefaultMpesaClient implements MpesaClient {
         }
     }
 
-    // Public constructor (original)
+    // ============================================
+    // CONSTRUCTORS
+    // ============================================
+
+    /**
+     * Creates a new client with the default Java SE HTTP client.
+     * Works on JDK 11+ environments (Spring Boot, Quarkus, standalone Java).
+     *
+     * @param config M-Pesa configuration
+     */
     public DefaultMpesaClient(MpesaConfig config) {
-        this.config = config;
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(config.getConnectTimeout()))
-                .build();
-        this.idempotencyCache = new ConcurrentHashMap<>();
+        this(config, new JavaHttpClient(config.getConnectTimeout(), config.getReadTimeout()));
     }
 
-    // Package-private constructor for testing (allows injecting mock HttpClient)
-    DefaultMpesaClient(MpesaConfig config, HttpClient httpClient) {
+    /**
+     * Creates a new client with a custom HTTP client.
+     * Use this on Android (with OkHttp) or for testing (with mocks).
+     *
+     * @param config     M-Pesa configuration
+     * @param httpClient your own implementation of {@link MpesaHttpClient}
+     */
+    public DefaultMpesaClient(MpesaConfig config, MpesaHttpClient httpClient) {
         this.config = config;
         this.httpClient = httpClient;
         this.idempotencyCache = new ConcurrentHashMap<>();
     }
+
+    // Package-private constructor for testing (allows injecting mock HttpClient)
+    // Kept for backward compatibility with existing tests, but now wraps it via a simple adapter.
+    DefaultMpesaClient(MpesaConfig config, java.net.http.HttpClient httpClient) {
+        this(config, new JavaHttpClient(httpClient));
+    }
+
+    // ============================================
+    // CORE PAYMENT METHOD
+    // ============================================
 
     @Override
     public StkPushResponse initiateStkPush(StkPushRequest request) {
         // 1. PHONE NUMBER VALIDATION & NORMALIZATION
         String rawPhoneNumber = request.phoneNumber();
 
-        // Validate phone number
         if (!PhoneNumberUtils.isValidKenyanPhone(rawPhoneNumber)) {
             String maskedPhone = PhoneNumberUtils.maskPhoneNumber(rawPhoneNumber);
             log.severe("❌ Invalid Kenyan phone number: " + maskedPhone);
@@ -87,11 +109,8 @@ public class DefaultMpesaClient implements MpesaClient {
             );
         }
 
-        // Normalize phone number to M-Pesa format (2547XXXXXXXX)
         String normalizedPhone = PhoneNumberUtils.normalizeKenyanPhone(rawPhoneNumber);
         String maskedPhone = PhoneNumberUtils.maskPhoneNumber(rawPhoneNumber);
-
-        // Detect phone type for logging/analytics
         PhoneNumberUtils.PhoneType phoneType = PhoneNumberUtils.detectPhoneType(rawPhoneNumber);
 
         log.info("📱 Processing STK Push for phone: " + maskedPhone);
@@ -122,7 +141,7 @@ public class DefaultMpesaClient implements MpesaClient {
         String password = request.businessShortCode() + config.getApiSecret() + timestamp;
         String encodedPassword = Base64.getEncoder().encodeToString(password.getBytes());
 
-        // 5. PREPARE PAYLOAD (USE NORMALIZED PHONE NUMBER)
+        // 5. PREPARE PAYLOAD
         Map<String, Object> payload = new HashMap<>();
         payload.put("BusinessShortCode", request.businessShortCode());
         payload.put("Password", encodedPassword);
@@ -138,30 +157,23 @@ public class DefaultMpesaClient implements MpesaClient {
 
         try {
             String jsonPayload = payloadToJson(payload);
-
             log.info("📤 Sending STK Push request for phone: " + maskedPhone + " | Amount: " + request.amount());
 
-            HttpRequest httpRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(config.getBaseUrl() + "/mpesa/stkpush/v1/processrequest"))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + accessToken)
-                    .timeout(Duration.ofSeconds(config.getReadTimeout()))
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
-                    .build();
+            // Prepare headers
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Content-Type", "application/json");
+            headers.put("Authorization", "Bearer " + accessToken);
 
-            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                String errorBody = response.body();
-                log.severe("❌ M-Pesa API returned error: " + response.statusCode() +
-                        " for phone: " + maskedPhone + " | Body: " + errorBody);
-                throw new MpesaApiException(
-                        "M-Pesa API returned " + response.statusCode() + ": " + errorBody
-                );
-            }
+            // Execute request via the pluggable HTTP client
+            String responseBody = httpClient.sendRequest(
+                    config.getBaseUrl() + "/mpesa/stkpush/v1/processrequest",
+                    "POST",
+                    jsonPayload,
+                    headers
+            );
 
             // Parse JSON manually (NO Jackson!)
-            StkPushResponse stkResponse = parseStkPushResponse(response.body());
+            StkPushResponse stkResponse = parseStkPushResponse(responseBody);
 
             // DECORATE AND CACHE ONLY SUCCESSFUL RESPONSES
             if (stkResponse != null) {
@@ -203,20 +215,13 @@ public class DefaultMpesaClient implements MpesaClient {
             String credentials = config.getConsumerKey() + ":" + config.getConsumerSecret();
             String encodedCredentials = Base64.getEncoder().encodeToString(credentials.getBytes());
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(config.getBaseUrl() + "/oauth/v1/generate?grant_type=client_credentials"))
-                    .header("Authorization", "Basic " + encodedCredentials)
-                    .GET()
-                    .build();
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "Basic " + encodedCredentials);
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            String url = config.getBaseUrl() + "/oauth/v1/generate?grant_type=client_credentials";
+            String responseBody = httpClient.sendRequest(url, "GET", null, headers);
 
-            if (response.statusCode() != 200) {
-                throw new MpesaApiException("Safaricom authentication failed: " + response.statusCode());
-            }
-
-            // Extract access_token from JSON manually (NO Jackson!)
-            String accessToken = extractAccessToken(response.body());
+            String accessToken = extractAccessToken(responseBody);
             if (accessToken != null) {
                 cachedToken = accessToken;
                 tokenExpiryTime = System.currentTimeMillis() + (55 * 60 * 1000); // 55 minutes
