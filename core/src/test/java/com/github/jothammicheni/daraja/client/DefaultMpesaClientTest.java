@@ -4,6 +4,7 @@ import com.github.jothammicheni.daraja.config.MpesaConfig;
 import com.github.jothammicheni.daraja.dto.StkPushRequest;
 import com.github.jothammicheni.daraja.dto.StkPushResponse;
 import com.github.jothammicheni.daraja.exception.MpesaApiException;
+import com.github.jothammicheni.daraja.http.MpesaHttpClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,19 +12,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.IOException;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class DefaultMpesaClientTest {
@@ -38,7 +33,7 @@ class DefaultMpesaClientTest {
     private DefaultMpesaClient client;
 
     @Mock
-    private HttpClient mockHttpClient;
+    private MpesaHttpClient mockHttpClient;
 
     @BeforeEach
     void setUp() {
@@ -111,7 +106,7 @@ class DefaultMpesaClientTest {
     @Test
     void shouldCreateClientWithConfig() {
         assertThat(client).isNotNull();
-        assertThat(client).hasFieldOrPropertyWithValue("httpClient", mockHttpClient);
+        assertThat(client).extracting("httpClient").isEqualTo(mockHttpClient);
     }
 
     // ============================================
@@ -119,7 +114,7 @@ class DefaultMpesaClientTest {
     // ============================================
 
     @Test
-    void shouldInitiateStkPushSuccessfully() throws IOException, InterruptedException {
+    void shouldInitiateStkPushSuccessfully() throws IOException {
         StkPushRequest request = StkPushRequest.builder()
                 .businessShortCode("174379")
                 .phoneNumber("254708374149")
@@ -127,14 +122,23 @@ class DefaultMpesaClientTest {
                 .accountReference("ORDER-123")
                 .build();
 
-        String tokenJson = "{\"access_token\":\"mock-token-123\"}";
-        HttpResponse<String> tokenResponse = mockHttpResponse(200, tokenJson);
+        String tokenUrl = BASE_URL + "/oauth/v1/generate?grant_type=client_credentials";
+        String stkUrl = BASE_URL + "/mpesa/stkpush/v1/processrequest";
+
+        when(mockHttpClient.sendRequest(
+                eq(tokenUrl),
+                eq("GET"),
+                isNull(),
+                anyMap()
+        )).thenReturn("{\"access_token\":\"mock-token-123\"}");
 
         String stkPushJson = "{\"MerchantRequestID\":\"MER-123\",\"CheckoutRequestID\":\"CHECK-456\",\"ResponseCode\":\"0\",\"ResponseDescription\":\"Success\",\"CustomerMessage\":\"Payment received\"}";
-        HttpResponse<String> stkPushResponse = mockHttpResponse(200, stkPushJson);
-
-        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenReturn(tokenResponse, stkPushResponse);
+        when(mockHttpClient.sendRequest(
+                eq(stkUrl),
+                eq("POST"),
+                anyString(),
+                anyMap()
+        )).thenReturn(stkPushJson);
 
         StkPushResponse response = client.initiateStkPush(request);
 
@@ -143,6 +147,9 @@ class DefaultMpesaClientTest {
         assertThat(response.merchantRequestID()).isEqualTo("MER-123");
         assertThat(response.responseCode()).isEqualTo("0");
         assertThat(response.isAccepted()).isTrue();
+
+        // At least one request must have been made (the mock is called for token and STK Push)
+        verify(mockHttpClient, atLeastOnce()).sendRequest(anyString(), anyString(), anyString(), anyMap());
     }
 
     // ============================================
@@ -150,7 +157,7 @@ class DefaultMpesaClientTest {
     // ============================================
 
     @Test
-    void shouldThrowExceptionWhenStkPushApiReturnsError() throws IOException, InterruptedException {
+    void shouldThrowExceptionWhenStkPushApiReturnsError() throws IOException {
         StkPushRequest request = StkPushRequest.builder()
                 .businessShortCode("174379")
                 .phoneNumber("254708374149")
@@ -158,13 +165,21 @@ class DefaultMpesaClientTest {
                 .accountReference("ORDER-123")
                 .build();
 
-        String tokenJson = "{\"access_token\":\"mock-token-123\"}";
-        HttpResponse<String> tokenResponse = mockHttpResponse(200, tokenJson);
+        String tokenUrl = BASE_URL + "/oauth/v1/generate?grant_type=client_credentials";
+        when(mockHttpClient.sendRequest(
+                eq(tokenUrl),
+                eq("GET"),
+                isNull(),
+                anyMap()
+        )).thenReturn("{\"access_token\":\"mock-token-123\"}");
 
-        HttpResponse<String> stkPushResponse = mockHttpResponse(400, "{\"error\":\"Invalid request\"}");
-
-        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenReturn(tokenResponse, stkPushResponse);
+        String stkUrl = BASE_URL + "/mpesa/stkpush/v1/processrequest";
+        when(mockHttpClient.sendRequest(
+                eq(stkUrl),
+                eq("POST"),
+                anyString(),
+                anyMap()
+        )).thenThrow(new IOException("HTTP error 400: {\"error\":\"Invalid request\"}"));
 
         assertThatThrownBy(() -> client.initiateStkPush(request))
                 .isInstanceOf(MpesaApiException.class)
@@ -176,7 +191,7 @@ class DefaultMpesaClientTest {
     // ============================================
 
     @Test
-    void shouldReturnCachedResponseForDuplicateRequest() throws IOException, InterruptedException {
+    void shouldReturnCachedResponseForDuplicateRequest() throws IOException {
         String idempotencyKey = "my-unique-key-123";
         StkPushRequest request = StkPushRequest.builder()
                 .businessShortCode("174379")
@@ -186,20 +201,38 @@ class DefaultMpesaClientTest {
                 .idempotencyKey(idempotencyKey)
                 .build();
 
-        String tokenJson = "{\"access_token\":\"mock-token-123\"}";
-        HttpResponse<String> tokenResponse = mockHttpResponse(200, tokenJson);
+        String tokenUrl = BASE_URL + "/oauth/v1/generate?grant_type=client_credentials";
+        when(mockHttpClient.sendRequest(
+                eq(tokenUrl),
+                eq("GET"),
+                isNull(),
+                anyMap()
+        )).thenReturn("{\"access_token\":\"mock-token-123\"}");
 
+        String stkUrl = BASE_URL + "/mpesa/stkpush/v1/processrequest";
         String stkPushJson = "{\"MerchantRequestID\":\"MER-123\",\"CheckoutRequestID\":\"CHECK-456\",\"ResponseCode\":\"0\",\"ResponseDescription\":\"Success\"}";
-        HttpResponse<String> stkPushResponse = mockHttpResponse(200, stkPushJson);
+        when(mockHttpClient.sendRequest(
+                eq(stkUrl),
+                eq("POST"),
+                anyString(),
+                anyMap()
+        )).thenReturn(stkPushJson);
 
-        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenReturn(tokenResponse, stkPushResponse);
-
+        // First call – should cache the response
         StkPushResponse firstResponse = client.initiateStkPush(request);
         assertThat(firstResponse.checkoutRequestID()).isEqualTo("CHECK-456");
 
+        // Second call – should hit the idempotency cache and return the same response
         StkPushResponse secondResponse = client.initiateStkPush(request);
         assertThat(secondResponse.checkoutRequestID()).isEqualTo("CHECK-456");
+        // The second response should be the exact same object (cached)
+        assertThat(secondResponse).isSameAs(firstResponse);
+
+        // Verify that the mock was called at least once (the first call)
+        // The second call should not trigger any new HTTP request because of the cache.
+        // We cannot assert exact invocation count because the token may be cached,
+        // so we just ensure at least one request was made.
+        verify(mockHttpClient, atLeastOnce()).sendRequest(anyString(), anyString(), anyString(), anyMap());
     }
 
     // ============================================
@@ -215,19 +248,29 @@ class DefaultMpesaClientTest {
                 .accountReference("ORDER-123")
                 .build();
 
-        // First call – token + STK Push
-        String tokenJson1 = "{\"access_token\":\"mock-token-123\"}";
-        HttpResponse<String> tokenResponse1 = mockHttpResponse(200, tokenJson1);
-        String stkPushJson1 = "{\"MerchantRequestID\":\"MER-123\",\"CheckoutRequestID\":\"CHECK-456\",\"ResponseCode\":\"0\",\"ResponseDescription\":\"Success\"}";
-        HttpResponse<String> stkPushResponse1 = mockHttpResponse(200, stkPushJson1);
+        String tokenUrl = BASE_URL + "/oauth/v1/generate?grant_type=client_credentials";
+        String stkUrl = BASE_URL + "/mpesa/stkpush/v1/processrequest";
 
-        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenReturn(tokenResponse1, stkPushResponse1);
+        // First call
+        when(mockHttpClient.sendRequest(
+                eq(tokenUrl),
+                eq("GET"),
+                isNull(),
+                anyMap()
+        )).thenReturn("{\"access_token\":\"mock-token-123\"}");
+
+        String stkPushJson1 = "{\"MerchantRequestID\":\"MER-123\",\"CheckoutRequestID\":\"CHECK-456\",\"ResponseCode\":\"0\",\"ResponseDescription\":\"Success\"}";
+        when(mockHttpClient.sendRequest(
+                eq(stkUrl),
+                eq("POST"),
+                anyString(),
+                anyMap()
+        )).thenReturn(stkPushJson1);
 
         StkPushResponse firstResponse = client.initiateStkPush(request1);
         assertThat(firstResponse.checkoutRequestID()).isEqualTo("CHECK-456");
 
-        // Capture the cached token after first call
+        // Capture the token
         java.lang.reflect.Field tokenField = DefaultMpesaClient.class.getDeclaredField("cachedToken");
         tokenField.setAccessible(true);
         String firstToken = (String) tokenField.get(client);
@@ -237,22 +280,25 @@ class DefaultMpesaClientTest {
         expiryField.setAccessible(true);
         expiryField.setLong(client, System.currentTimeMillis() - 10000);
 
-        // Reset mock and stub the second call sequence
+        // Reset mock and stub second call
         reset(mockHttpClient);
-        String tokenJson2 = "{\"access_token\":\"mock-token-456\"}";
-        HttpResponse<String> tokenResponse2 = mockHttpResponse(200, tokenJson2);
+
+        when(mockHttpClient.sendRequest(
+                eq(tokenUrl),
+                eq("GET"),
+                isNull(),
+                anyMap()
+        )).thenReturn("{\"access_token\":\"mock-token-456\"}");
+
         String stkPushJson2 = "{\"MerchantRequestID\":\"MER-789\",\"CheckoutRequestID\":\"CHECK-999\",\"ResponseCode\":\"0\",\"ResponseDescription\":\"Success\"}";
-        HttpResponse<String> stkPushResponse2 = mockHttpResponse(200, stkPushJson2);
+        when(mockHttpClient.sendRequest(
+                eq(stkUrl),
+                eq("POST"),
+                anyString(),
+                anyMap()
+        )).thenReturn(stkPushJson2);
 
-        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenReturn(tokenResponse2, stkPushResponse2);
-
-        // IMPORTANT: use a distinct idempotency key for the second logical
-        // request. Reusing request1's key here would hit the SDK's
-        // idempotency cache and return the cached first response WITHOUT
-        // calling httpClient.send() again - which is correct SDK behavior,
-        // but defeats the point of this test (verifying token refresh
-        // actually triggers a fresh HTTP round-trip).
+        // Use a different idempotency key to avoid the idempotency cache
         StkPushRequest request2 = StkPushRequest.builder()
                 .businessShortCode("174379")
                 .phoneNumber("254708374149")
@@ -264,7 +310,6 @@ class DefaultMpesaClientTest {
         StkPushResponse secondResponse = client.initiateStkPush(request2);
         assertThat(secondResponse.checkoutRequestID()).isEqualTo("CHECK-999");
 
-        // Verify that the cached token has changed
         String secondToken = (String) tokenField.get(client);
         assertThat(secondToken).isNotEqualTo(firstToken);
         assertThat(secondToken).isEqualTo("mock-token-456");
@@ -275,7 +320,7 @@ class DefaultMpesaClientTest {
     // ============================================
 
     @Test
-    void shouldThrowExceptionWhenTokenFetchFails() throws IOException, InterruptedException {
+    void shouldThrowExceptionWhenTokenFetchFails() throws IOException {
         StkPushRequest request = StkPushRequest.builder()
                 .businessShortCode("174379")
                 .phoneNumber("254708374149")
@@ -283,14 +328,14 @@ class DefaultMpesaClientTest {
                 .accountReference("ORDER-123")
                 .build();
 
-        // 401 response - fetchNewToken() only reads statusCode() in this
-        // branch and never calls body(), so mockHttpResponse()'s lenient
-        // stubbing (see helper below) is what keeps this test passing
-        // under Mockito's strict-stubs mode.
-        HttpResponse<String> tokenResponse = mockHttpResponse(401, "Unauthorized");
+        String tokenUrl = BASE_URL + "/oauth/v1/generate?grant_type=client_credentials";
 
-        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenReturn(tokenResponse);
+        when(mockHttpClient.sendRequest(
+                eq(tokenUrl),
+                eq("GET"),
+                isNull(),
+                anyMap()
+        )).thenThrow(new IOException("HTTP error 401"));
 
         assertThatThrownBy(() -> client.initiateStkPush(request))
                 .isInstanceOf(MpesaApiException.class)
@@ -302,7 +347,7 @@ class DefaultMpesaClientTest {
     // ============================================
 
     @Test
-    void shouldThrowExceptionWhenStkPushResponseIsMalformed() throws IOException, InterruptedException {
+    void shouldThrowExceptionWhenStkPushResponseIsMalformed() throws IOException {
         StkPushRequest request = StkPushRequest.builder()
                 .businessShortCode("174379")
                 .phoneNumber("254708374149")
@@ -310,14 +355,21 @@ class DefaultMpesaClientTest {
                 .accountReference("ORDER-123")
                 .build();
 
-        String tokenJson = "{\"access_token\":\"mock-token\"}";
-        HttpResponse<String> tokenResponse = mockHttpResponse(200, tokenJson);
+        String tokenUrl = BASE_URL + "/oauth/v1/generate?grant_type=client_credentials";
+        when(mockHttpClient.sendRequest(
+                eq(tokenUrl),
+                eq("GET"),
+                isNull(),
+                anyMap()
+        )).thenReturn("{\"access_token\":\"mock-token\"}");
 
-        String malformedJson = "This is not JSON";
-        HttpResponse<String> stkPushResponse = mockHttpResponse(200, malformedJson);
-
-        when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
-                .thenReturn(tokenResponse, stkPushResponse);
+        String stkUrl = BASE_URL + "/mpesa/stkpush/v1/processrequest";
+        when(mockHttpClient.sendRequest(
+                eq(stkUrl),
+                eq("POST"),
+                anyString(),
+                anyMap()
+        )).thenReturn("This is not JSON");
 
         assertThatThrownBy(() -> client.initiateStkPush(request))
                 .isInstanceOf(MpesaApiException.class)
@@ -331,19 +383,5 @@ class DefaultMpesaClientTest {
     @Test
     void shouldCleanExpiredCacheWithoutException() {
         assertThatCode(() -> client.cleanExpiredCache()).doesNotThrowAnyException();
-    }
-
-    // Helper method to create mocked HttpResponse.
-    // Both stubs are lenient because not every test path reads both
-    // statusCode() and body() - e.g. fetchNewToken() only calls body()
-    // after a 200 status check, so a 401-mock's body() stub would
-    // otherwise be flagged as an unnecessary stubbing under Mockito's
-    // strict-stubs mode (the MockitoExtension default).
-    private static <T> HttpResponse<T> mockHttpResponse(int statusCode, T body) {
-        @SuppressWarnings("unchecked")
-        HttpResponse<T> response = mock(HttpResponse.class);
-        lenient().when(response.statusCode()).thenReturn(statusCode);
-        lenient().when(response.body()).thenReturn(body);
-        return response;
     }
 }
